@@ -103,6 +103,9 @@
   $("rows").addEventListener("click", async (ev) => {
     const st = ev.target.dataset && ev.target.dataset.st;
     if (!st) return;
+    const btn = ev.target, label = btn.textContent;
+    btn.disabled = true; btn.textContent = "계산 중…";
+    $("pred").hidden = false; $("pred").textContent = `${st} 예측 계산 중…`;
     try {
       showDetail(st).catch((e) => ($("err").textContent = e.message));
       const p = await getJson("/air/predict?station=" + encodeURIComponent(st));
@@ -110,8 +113,11 @@
       $("pred").innerHTML = `<b>${esc(p.station)}</b> ` + (p.ready
         ? `1시간 뒤 PM10 약 <b>${p.next_pm10}</b> ${badge(p.next_grade)} (평균 오차 ±${p.avg_error})`
         : esc(p.message));
+      $("pred").scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) {
       $("err").textContent = e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = label;
     }
   });
 
