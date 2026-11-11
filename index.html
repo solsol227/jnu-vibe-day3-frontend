@@ -33,6 +33,8 @@
     </table>
   </div>
   <div id="pred" class="card" hidden></div>
+  <div id="detail" class="card" hidden></div>
+  <div id="dbstat" class="card muted">DB 저장 현황 불러오는 중…</div>
   <p class="muted">API: <span id="api"></span></p>
 </main>
 <script src="config.js"></script>
@@ -48,6 +50,37 @@
     const r = await fetch(API + path);
     if (!r.ok) throw new Error(`${path} → ${r.status}`);
     return r.json();
+  }
+
+  function spark(vals) {
+    const v = vals.filter((x) => x != null);
+    if (v.length < 2) return "";
+    const max = Math.max(...v, 1), w = 300, h = 60;
+    const pts = v.map((x, i) => `${(i / (v.length - 1) * w).toFixed(1)},${(h - x / max * (h - 6) - 3).toFixed(1)}`).join(" ");
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}"><polyline points="${pts}" fill="none" stroke="#2f80ed" stroke-width="2"/></svg>`;
+  }
+
+  async function loadDb() {
+    try {
+      const d = await getJson("/db/status");
+      $("dbstat").innerHTML = `🗄 Supabase 저장 현황: <b>${d.rows}</b>행 누적` +
+        (d.first ? ` (${esc(d.first)} ~ ${esc(d.last)})` : "") +
+        ` · ${d.mode === "demo" ? "연습 데이터" : "공공데이터"} · 1시간마다 자동 저장`;
+    } catch (e) { $("dbstat").textContent = "DB 현황 불러오기 실패: " + e.message; }
+  }
+
+  async function showDetail(st) {
+    const q = encodeURIComponent(st);
+    const [h, c] = await Promise.all([getJson(`/air/history?station=${q}&hours=48`), getJson(`/air/compare?station=${q}`)]);
+    let cmp = "어제 같은 시간 기록이 아직 없습니다 (내일 이 시간부터 비교 가능).";
+    if (c.yesterday) {
+      const d = c.diff_pm10;
+      cmp = `지금 ${c.now.pm10} vs 어제 같은 시간 ${c.yesterday.pm10} → ` +
+        (d == null ? "-" : `<b>${d > 0 ? "+" : ""}${d}</b>`);
+    }
+    $("detail").hidden = false;
+    $("detail").innerHTML = `<b>${esc(st)}</b> 최근 기록 (PM10, ${h.length}개)${spark(h.map((x) => x.pm10))}` +
+      `<div class="muted">${cmp}</div>`;
   }
 
   async function load() {
@@ -71,6 +104,7 @@
     const st = ev.target.dataset && ev.target.dataset.st;
     if (!st) return;
     try {
+      showDetail(st).catch((e) => ($("err").textContent = e.message));
       const p = await getJson("/air/predict?station=" + encodeURIComponent(st));
       $("pred").hidden = false;
       $("pred").innerHTML = `<b>${esc(p.station)}</b> ` + (p.ready
@@ -82,6 +116,7 @@
   });
 
   load();
+  loadDb();
 </script>
 </body>
 </html>
