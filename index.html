@@ -52,12 +52,30 @@
     return r.json();
   }
 
-  function spark(vals) {
-    const v = vals.filter((x) => x != null);
-    if (v.length < 2) return "";
-    const max = Math.max(...v, 1), w = 300, h = 60;
-    const pts = v.map((x, i) => `${(i / (v.length - 1) * w).toFixed(1)},${(h - x / max * (h - 6) - 3).toFixed(1)}`).join(" ");
-    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}"><polyline points="${pts}" fill="none" stroke="#2f80ed" stroke-width="2"/></svg>`;
+  // 시간(x축)·값(y축) 라벨이 있는 선 그래프. pts = [{time:"YYYY-MM-DD HH:MM", pm10}]
+  function chart(pts) {
+    const d = pts.filter((p) => p.pm10 != null);
+    if (d.length < 2) return '<div class="muted">그래프는 기록이 2개 이상 쌓이면 표시됩니다.</div>';
+    const W = 320, H = 170, L = 34, R = 10, T = 12, B = 44;
+    const max = Math.max(...d.map((p) => p.pm10), 10), min = 0;
+    const x = (i) => L + (i / (d.length - 1)) * (W - L - R);
+    const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
+    const line = d.map((p, i) => `${x(i).toFixed(1)},${y(p.pm10).toFixed(1)}`).join(" ");
+    const grid = [0, 0.5, 1].map((f) => {
+      const v = Math.round(min + f * (max - min)), yy = y(v);
+      return `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="currentColor" opacity=".15"/>` +
+             `<text x="${L - 4}" y="${yy + 3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".7">${v}</text>`;
+    }).join("");
+    const n = Math.min(4, d.length);
+    const idx = [...new Set(Array.from({ length: n }, (_, k) => Math.round((k * (d.length - 1)) / (n - 1))))];
+    const xl = idx.map((i) => {
+      const [day, hm] = d[i].time.split(" ");
+      return `<text x="${x(i)}" y="${H - 26}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".8">${hm}</text>` +
+             `<text x="${x(i)}" y="${H - 14}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".6">${day.slice(5)}</text>`;
+    }).join("");
+    const dots = d.map((p, i) => `<circle cx="${x(i)}" cy="${y(p.pm10)}" r="3" fill="#2f80ed"><title>${p.time} · PM10 ${p.pm10}</title></circle>`).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="color:var(--fg)">${grid}` +
+           `<polyline points="${line}" fill="none" stroke="#2f80ed" stroke-width="2"/>${dots}${xl}</svg>`;
   }
 
   async function loadDb() {
@@ -79,7 +97,7 @@
         (d == null ? "-" : `<b>${d > 0 ? "+" : ""}${d}</b>`);
     }
     $("detail").hidden = false;
-    $("detail").innerHTML = `<b>${esc(st)}</b> 최근 기록 (PM10, ${h.length}개)${spark(h.map((x) => x.pm10))}` +
+    $("detail").innerHTML = `<b>${esc(st)}</b> 최근 기록 (PM10, ${h.length}개)${chart(h)}` +
       `<div class="muted">${cmp}</div>`;
   }
 
