@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>제주 미세먼지</title>
+  <style>
+    :root { --bg:#f6f7f9; --fg:#1b1f24; --card:#fff; --line:#e3e6ea; --muted:#6b7480; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#14171a; --fg:#e8eaed; --card:#1e2227; --line:#2e343b; --muted:#98a2ae; }
+    }
+    body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,"Malgun Gothic",sans-serif; }
+    main { max-width:640px; margin:0 auto; padding:20px 16px 40px; }
+    h1 { font-size:1.2rem; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin:12px 0; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:8px 6px; border-bottom:1px solid var(--line); text-align:left; font-size:.92rem; }
+    .badge { color:#fff; border-radius:6px; padding:1px 8px; font-size:.8rem; }
+    .muted { color:var(--muted); font-size:.85rem; }
+    .err { color:#eb5757; }
+    button { cursor:pointer; padding:4px 10px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>제주 미세먼지 <span class="muted">(공공데이터 → FastAPI 가공 → Supabase)</span></h1>
+  <div id="err" class="err"></div>
+  <div id="summary" class="card muted">불러오는 중…</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>측정소</th><th>시각</th><th>PM10</th><th>PM2.5</th><th>예측</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="pred" class="card" hidden></div>
+  <p class="muted">API: <span id="api"></span></p>
+</main>
+<script src="config.js"></script>
+<script>
+  const API = window.API_URL;
+  const COLOR = { "좋음":"#2f80ed", "보통":"#27ae60", "나쁨":"#f2994a", "매우나쁨":"#eb5757" };
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const badge = (g) => g ? `<span class="badge" style="background:${COLOR[g]}">${esc(g)}</span>` : "-";
+  $("api").textContent = API;
+
+  async function getJson(path) {
+    const r = await fetch(API + path);
+    if (!r.ok) throw new Error(`${path} → ${r.status}`);
+    return r.json();
+  }
+
+  async function load() {
+    try {
+      const [s, rows] = await Promise.all([getJson("/air/summary"), getJson("/air/latest")]);
+      $("summary").innerHTML = s.stations
+        ? `측정소 ${s.stations}곳 평균 PM10 <b>${s.avg_pm10 ?? "-"}</b> ${badge(s.avg_pm10_grade)}` +
+          (s.mode === "demo" ? " <small>(연습 데이터)</small>" : "")
+        : "아직 수집된 데이터가 없습니다.";
+      $("rows").innerHTML = rows.map((r) => `
+        <tr><td>${esc(r.station)}</td><td>${esc(r.time.slice(11))}</td>
+        <td>${r.pm10 ?? "-"} ${badge(r.pm10_grade)}</td><td>${r.pm25 ?? "-"} ${badge(r.pm25_grade)}</td>
+        <td><button data-st="${esc(r.station)}">1시간 뒤?</button></td></tr>`).join("");
+      $("err").textContent = "";
+    } catch (e) {
+      $("err").textContent = "백엔드 연결 실패: " + e.message;
+    }
+  }
+
+  $("rows").addEventListener("click", async (ev) => {
+    const st = ev.target.dataset && ev.target.dataset.st;
+    if (!st) return;
+    try {
+      const p = await getJson("/air/predict?station=" + encodeURIComponent(st));
+      $("pred").hidden = false;
+      $("pred").innerHTML = `<b>${esc(p.station)}</b> ` + (p.ready
+        ? `1시간 뒤 PM10 약 <b>${p.next_pm10}</b> ${badge(p.next_grade)} (평균 오차 ±${p.avg_error})`
+        : esc(p.message));
+    } catch (e) {
+      $("err").textContent = e.message;
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>
