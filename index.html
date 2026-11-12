@@ -4,7 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>제주 미세먼지</title>
+  <!-- 지도 라이브러리 Leaflet (CDN) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
+    #map { height:380px; border-radius:8px; }
+    #mapinfo { margin-top:10px; }
     :root { --bg:#f6f7f9; --fg:#1b1f24; --card:#fff; --line:#e3e6ea; --muted:#6b7480; }
     @media (prefers-color-scheme: dark) {
       :root { --bg:#14171a; --fg:#e8eaed; --card:#1e2227; --line:#2e343b; --muted:#98a2ae; }
@@ -27,6 +31,11 @@
   <div id="err" class="err"></div>
   <div id="summary" class="card muted">불러오는 중…</div>
   <div class="card">
+    <div id="map"></div>
+    <div id="mapinfo" class="muted">지도에서 지역(마커)을 눌러 보세요.</div>
+    <div id="unplaced" class="muted"></div>
+  </div>
+  <div class="card">
     <table>
       <thead><tr><th>측정소</th><th>시각</th><th>PM10</th><th>PM2.5</th><th>예측</th></tr></thead>
       <tbody id="rows"></tbody>
@@ -37,9 +46,11 @@
   <div id="dbstat" class="card muted">DB 저장 현황 불러오는 중…</div>
   <p class="muted">API: <span id="api"></span></p>
 </main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="config.js"></script>
 <script>
-  const API = window.API_URL;
+  // config.js 가 안 읽히는 환경(파일을 미리보기 창으로 열 때 등)에서도 동작하도록 Railway 주소를 기본값으로
+  const API = window.API_URL || "https://jnu-vibe-day3-backend-production.up.railway.app";
   const COLOR = { "좋음":"#2f80ed", "보통":"#27ae60", "나쁨":"#f2994a", "매우나쁨":"#eb5757" };
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -101,6 +112,59 @@
       `<div class="muted">${cmp}</div>`;
   }
 
+  // ── 지도: 백엔드 /air/latest 의 lat, lng 로 측정소 마커를 찍는다 ──
+  const GRAY = "#9aa0a6";
+  let map = null, layer = null, selectedSt = null;
+
+  function markerIcon(r, selected) {
+    const c = COLOR[r.pm10_grade] || GRAY, s = selected ? 44 : 36;
+    return L.divIcon({
+      className: "", iconSize: [s, s], iconAnchor: [s / 2, s / 2],
+      html: `<div style="width:${s}px;height:${s}px;border-radius:50%;background:${c};color:#fff;display:flex;` +
+            `align-items:center;justify-content:center;font:bold 13px sans-serif;` +
+            `border:${selected ? "3px solid #222" : "2px solid #fff"};box-shadow:0 1px 4px rgba(0,0,0,.45)">${r.pm10 ?? "-"}</div>`,
+    });
+  }
+
+  function pickStation(rows, st) {
+    selectedSt = st;
+    const r = rows.find((x) => x.station === st);
+    if (!r) return;
+    $("mapinfo").innerHTML = `<b style="font-size:1rem;color:var(--fg)">${esc(r.station)}</b> ${esc(r.time)} 기준<br>` +
+      `PM10 <b>${r.pm10 ?? "-"}</b> ㎍/㎥ ${badge(r.pm10_grade)} · PM2.5 <b>${r.pm25 ?? "-"}</b> ㎍/㎥ ${badge(r.pm25_grade)}`;
+    drawMap(rows);
+    showDetail(st).catch((e) => ($("err").textContent = e.message));  // 아래 기록 그래프도 함께
+  }
+
+  function drawMap(rows) {
+    if (typeof L === "undefined") { $("mapinfo").textContent = "지도 라이브러리를 불러오지 못했습니다."; return; }
+    if (!map) {  // 지도는 한 번만 만든다
+      map = L.map("map").setView([33.38, 126.55], 10);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        { attribution: "© OpenStreetMap", maxZoom: 18 }).addTo(map);
+      layer = L.layerGroup().addTo(map);
+    }
+    map.off("click");
+    const placed = rows.filter((r) => r.lat != null && r.lng != null);
+    // 지도 빈 곳을 누르면 가장 가까운 측정소 선택
+    map.on("click", (e) => {
+      let best = null;
+      for (const r of placed) {
+        const d = (r.lat - e.latlng.lat) ** 2 + (r.lng - e.latlng.lng) ** 2;
+        if (!best || d < best.d) best = { d, r };
+      }
+      if (best) pickStation(rows, best.r.station);
+    });
+    layer.clearLayers();
+    for (const r of placed) {
+      L.marker([r.lat, r.lng], { icon: markerIcon(r, r.station === selectedSt) })
+        .on("click", (e) => { L.DomEvent.stopPropagation(e); pickStation(rows, r.station); })
+        .bindTooltip(r.station).addTo(layer);
+    }
+    const no = rows.filter((r) => r.lat == null || r.lng == null);
+    $("unplaced").textContent = no.length ? "지도에 표시되지 않은 측정소(좌표 없음): " + no.map((r) => r.station).join(", ") : "";
+  }
+
   async function load() {
     try {
       const [s, rows] = await Promise.all([getJson("/air/summary"), getJson("/air/latest")]);
@@ -112,6 +176,7 @@
         <tr><td>${esc(r.station)}</td><td>${esc(r.time.slice(11))}</td>
         <td>${r.pm10 ?? "-"} ${badge(r.pm10_grade)}</td><td>${r.pm25 ?? "-"} ${badge(r.pm25_grade)}</td>
         <td><button data-st="${esc(r.station)}">1시간 뒤?</button></td></tr>`).join("");
+      drawMap(rows);
       $("err").textContent = "";
     } catch (e) {
       $("err").textContent = "백엔드 연결 실패: " + e.message;
